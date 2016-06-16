@@ -20,6 +20,9 @@ COLORREF pen_colour;
 int pen_width = 1;
 int pen_style = PS_SOLID;
 
+HBITMAP hbSavedDrawing;
+HDC hMemDC;
+BOOL has_saved = TRUE;
 
 COLORREF ShowColourDialog(HWND hwnd)
 {
@@ -37,7 +40,77 @@ COLORREF ShowColourDialog(HWND hwnd)
 
 	return chooser.rgbResult;
 }
+RECT last_painted_rect;
+void paint_current_event(HWND hwnd, BOOL save_to_buffer){
 
+	// current painting rectangle
+	RECT crect;
+	crect.left = min(p_mouse.x, p_start.x);
+	crect.right = max(p_mouse.x, p_start.x);
+	crect.top = min(p_mouse.y, p_start.y);
+	crect.bottom = max(p_mouse.y, p_start.y);
+
+	// last paint + current paint
+	RECT rect;
+	rect.left = min(crect.left, last_painted_rect.left);
+	rect.right = max(crect.right, last_painted_rect.right);
+	rect.top = min(crect.top, last_painted_rect.top);
+	rect.bottom = max(crect.bottom, last_painted_rect.bottom);
+
+	InvalidateRect(hwnd, &rect, FALSE);
+
+	PAINTSTRUCT ps;
+	HDC hdc = BeginPaint(hwnd, &ps);
+
+	RECT clientAreaSize;
+	GetClientRect(hwnd, &clientAreaSize);
+	if (has_saved) {
+		BitBlt(hdc, 0, 0, clientAreaSize.right, clientAreaSize.bottom, hMemDC, 0, 0, SRCCOPY);
+	}
+
+
+	HPEN hMyPen = CreatePen(pen_style, pen_width, pen_colour);
+	HBRUSH hMyBrush;
+	if (brush_mode == 0) {
+		hMyBrush = CreateSolidBrush(brush_colour);
+	}
+	else if (brush_mode == 1) {
+		hMyBrush = CreateHatchBrush(brush_style, brush_colour);
+	}
+	SelectObject(hdc, hMyPen);
+	SelectObject(hdc, hMyBrush);
+
+	//Rectangle(hdc, rect.left, rect.top, rect.right, rect.bottom);
+	if (mode == LINE_MODE) {
+		MoveToEx(hdc, p_start.x, p_start.y, 0);
+		LineTo(hdc, p_mouse.x, p_mouse.y);
+	}
+	else if (mode == RECT_MODE) {
+		Rectangle(hdc, crect.left, crect.top, crect.right, crect.bottom);
+	}
+	else if (mode == ELLI_MODE) {
+		Ellipse(hdc, crect.left, crect.top, crect.right, crect.bottom);
+	}
+
+	DeleteObject(hMyPen);
+	DeleteObject(hMyBrush);
+
+	if (save_to_buffer) {
+		RECT clientAreaSize;
+		GetClientRect(hwnd, &clientAreaSize);
+		//Save drawing surface from window (hdc) to the bitmap selected in hMemDC
+		BitBlt(hMemDC, 0, 0, clientAreaSize.right, clientAreaSize.bottom, hdc, 0, 0, SRCCOPY);
+		has_saved = TRUE;
+	}
+	EndPaint(hwnd, &ps);
+	ValidateRect(hwnd, &rect);
+
+	last_painted_rect.left = crect.left;
+	last_painted_rect.right = crect.right+1;
+	last_painted_rect.top = crect.top;
+	last_painted_rect.bottom = crect.bottom+1;
+
+}
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch (msg)
@@ -94,6 +167,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 			AppendMenu(hHelpMenu1, MF_STRING, 1022, L"&About");
 
 			SetMenu(hwnd, hMenuBar);
+		}
+		case WM_PAINT: {
+
+			PAINTSTRUCT ps;
+			HDC hdc = BeginPaint(hwnd, &ps);
+			RECT clientAreaSize;
+			GetClientRect(hwnd, &clientAreaSize);
+			BitBlt(hdc, 0, 0, clientAreaSize.right, clientAreaSize.bottom, hMemDC, 0, 0, SRCCOPY);
+			EndPaint(hwnd, &ps);
+
+			break;
 		}
 		case WM_SETREDRAW:{
 			break;
@@ -169,10 +253,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 		}
 
-		case WM_PAINT:
-		{
-			break;
-		}
 		case WM_ERASEBKGND:
 		{
 
@@ -192,56 +272,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 		{
 			p_mouse.x = GET_X_LPARAM(lParam);
 			p_mouse.y = GET_Y_LPARAM(lParam);
+			if (p_start.x != -1 && p_start.y != -1) {
+				//RedrawWindow(hwnd, &last_painted_rect, NULL, RDW_INVALIDATE | RDW_NOERASE | RDW_UPDATENOW);
+				paint_current_event(hwnd, FALSE);
+			}
 			break;
 		}
 		case WM_LBUTTONUP:
 		{
+			paint_current_event(hwnd, TRUE);
 
-			POINT pps[2];
-			pps[0] = p_start;
-			pps[1] = p_mouse;
-
-			RECT rectangle;
-			rectangle.left = min(p_mouse.x, p_start.x);
-			rectangle.right = max(p_mouse.x, p_start.x);
-			rectangle.top = min(p_mouse.y, p_start.y);
-			rectangle.bottom = max(p_mouse.y, p_start.y);
-
-			InvalidateRect(hwnd, &rectangle, FALSE);
-
-			PAINTSTRUCT ps;
-			HDC hdc = BeginPaint(hwnd, &ps);
-
-			HPEN hMyPen = CreatePen(pen_style, pen_width, pen_colour);
-			HBRUSH hMyBrush;
-			if (brush_mode == 0) {
-				hMyBrush = CreateSolidBrush(brush_colour);
-			}
-			else if (brush_mode == 1) {
-				hMyBrush = CreateHatchBrush(brush_style, brush_colour);
-			} 
-			SelectObject(hdc, hMyPen);
-			SelectObject(hdc, hMyBrush);
-
-			if (mode == LINE_MODE) {
-				MoveToEx(hdc, p_start.x, p_start.y, 0);
-				LineTo(hdc, p_mouse.x, p_mouse.y);
-			}
-			else if (mode == RECT_MODE) {
-				Rectangle(hdc, rectangle.left, rectangle.top, rectangle.right, rectangle.bottom);
-			}
-			else if (mode == ELLI_MODE) {
-				Ellipse(hdc, rectangle.left, rectangle.top, rectangle.right, rectangle.bottom);
-
-			}
-
-			DeleteObject(hMyPen);
-			DeleteObject(hMyBrush);
-			EndPaint(hwnd, &ps);
-
-			ValidateRect(hwnd, &rectangle);
-
-			// ExcludeUpdateRgn(NULL, hwnd);
 			// SendMessage(hwnd, WM_SETREDRAW, FALSE, NULL);
 
 			p_start.x = -1;
@@ -297,11 +337,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR params, i
 		MessageBox(0, L"Error Creating Window!", L"Error", MB_OK);
 		return 0;
 	}
+
+
 	ShowWindow(hwnd, nCmdShow);
 	UpdateWindow(hwnd);
 
+	HDC hdcWindow = GetDC(hwnd);
+	hMemDC = CreateCompatibleDC(hdcWindow); //We will use hMemDC to save window surface to the bitmap.
+	hbSavedDrawing = CreateCompatibleBitmap(hdcWindow, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+	SelectObject(hMemDC, hbSavedDrawing); //Select the bitmap to use by hMemDC.
+	ReleaseDC(hwnd, hdcWindow); //hdcWindow is no longer needed
+	paint_current_event(hwnd, TRUE);
+
 	p_start.x = -1;
 	p_start.y = -1;
+	last_painted_rect.top = 0;
+	last_painted_rect.bottom = 0;
+	last_painted_rect.left = 0;
+	last_painted_rect.right = 0;
 
 	while (GetMessage(&message, NULL, 0, 0) > 0)
 	{
